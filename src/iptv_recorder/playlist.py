@@ -87,7 +87,7 @@ def fetch_xtream(server: str, username: str, password: str) -> list[dict[str, An
         )
         cat_resp.raise_for_status()
         categories: dict[str, str] = {
-            str(c["category_id"]): c.get("category_name", "")
+            str(c.get("category_id", "")): c.get("category_name", "")
             for c in cat_resp.json()
         }
 

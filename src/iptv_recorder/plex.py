@@ -32,7 +32,7 @@ def list_library_sections(server_url: str, token: str) -> list[dict[str, Any]]:
     data = resp.json()
     sections = data.get("MediaContainer", {}).get("Directory", [])
     return [
-        {"id": str(s["key"]), "title": s.get("title", ""), "type": s.get("type", "")}
+        {"id": str(s.get("key", "")), "title": s.get("title", ""), "type": s.get("type", "")}
         for s in sections
     ]
 

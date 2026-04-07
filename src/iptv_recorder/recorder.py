@@ -136,6 +136,16 @@ def build_plex_filename(channel_name: str, start: datetime, plex_folder: Path) -
     return f"{safe} ({year}) [{suffix}].mp4"
 
 
+def _update_recording_status(rec_id: str, status: str) -> None:
+    """Persist a status change for the recording identified by *rec_id*."""
+    recordings = load_recordings()
+    for rec in recordings:
+        if rec["id"] == rec_id:
+            rec["status"] = status
+            break
+    save_recordings(recordings)
+
+
 # ---------------------------------------------------------------------------
 # Main recording function
 # ---------------------------------------------------------------------------
@@ -160,8 +170,8 @@ def run_recording(
             console.print("\n[bold red]Conflict detected![/bold red] The following recordings overlap:")
             for c in conflicts:
                 console.print(
-                    f"  • [yellow]{c['channel_name']}[/yellow]  "
-                    f"{c['start']} → {c.get('end', 'open-ended')}"
+                    f"  • [yellow]{c.get('channel_name', 'Unknown')}[/yellow]  "
+                    f"{c.get('start', '?')} → {c.get('end', 'open-ended')}"
                 )
             raise SystemExit(1)
 
@@ -175,10 +185,11 @@ def run_recording(
     if end is not None:
         now = datetime.now(tz=timezone.utc)
         effective_start = max(start.astimezone(timezone.utc), now)
-        duration_seconds = max(1, int((end.astimezone(timezone.utc) - effective_start).total_seconds()))
-        if duration_seconds <= 0:
+        raw_seconds = int((end.astimezone(timezone.utc) - effective_start).total_seconds())
+        if raw_seconds <= 0:
             console.print("[red]End time is in the past. Nothing to record.[/red]")
             raise SystemExit(1)
+        duration_seconds = max(1, raw_seconds)
 
     # --- Register recording ---
     entry: dict[str, Any] = {
@@ -241,19 +252,21 @@ def run_recording(
 
     console.print()
 
-    # --- Update status ---
-    recordings = load_recordings()
-    for rec in recordings:
-        if rec["id"] == rec_id:
-            rec["status"] = "interrupted" if interrupted else (
-                "done" if proc.returncode == 0 else "failed"
-            )
-            break
-    save_recordings(recordings)
+    # --- Determine initial status ---
+    ffmpeg_status = "interrupted" if interrupted else (
+        "done" if proc.returncode == 0 else "failed"
+    )
 
     # --- Post-processing ---
-    if not tmp_path.exists() or tmp_path.stat().st_size == 0:
+    try:
+        size = tmp_path.stat().st_size
+    except OSError:
+        size = 0
+
+    if size == 0:
         console.print("[red]Recording produced no output. Nothing to copy to Plex.[/red]")
+        ffmpeg_status = "failed"
+        _update_recording_status(rec_id, ffmpeg_status)
         return
 
     plex_filename = build_plex_filename(channel["name"], start, plex_folder)
@@ -266,7 +279,11 @@ def run_recording(
         console.print(f"[green]Saved:[/green] {dest}")
     except OSError as exc:
         console.print(f"[red]Failed to copy to Plex folder:[/red] {exc}")
+        ffmpeg_status = "failed"
+        _update_recording_status(rec_id, ffmpeg_status)
         return
+
+    _update_recording_status(rec_id, ffmpeg_status)
 
     # --- Plex library refresh ---
     try:
